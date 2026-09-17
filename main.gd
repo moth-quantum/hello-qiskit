@@ -1,10 +1,11 @@
 extends Node2D
 
 const MicroMoth = preload("res://micromoth.gd")
+const Puzzles   = preload("res://puzzles.gd")
 
 # Hello Qubits — Godot 4 port of the Hello Qiskit game from the Qiskit Textbook.
 # Two-qubit state displayed as Pauli expectation values in the original diamond layout.
-# Gates: x, z, h (single-qubit Clifford) and cx, cz (two-qubit Clifford).
+# Gates: x, z, h (single-qubit Clifford) and cz (two-qubit Clifford).
 # State is tracked as a 4-element complex statevector; Pauli expectations are derived analytically.
 
 # ── Statevector ────────────────────────────────────────────────────────────────
@@ -84,153 +85,10 @@ var _visible: Array = []  # subset of BOXES keys
 func _ready() -> void:
 	_font = ThemeDB.fallback_font
 	_build_puzzles()
-	_load(0)
+	queue_redraw()
 
-# ── Puzzle definitions ─────────────────────────────────────────────────────────
-# Each entry: title, description, init (list of [gate,qubit] pairs applied at load),
-# goal (Pauli→target dict, empty = no auto-win), gates (allowed_gates structure),
-# visible ("all" or list of Pauli keys to show).
 func _build_puzzles() -> void:
-	_puzzles = [
-		# ── Single-qubit intro ─────────────────────────────────────────────────
-		{
-			"title": "Bit flip",
-			"desc": "Flip the qubit from |0⟩ to |1⟩.\nThe circle goes black → white.",
-			"init": [], "goal": {"ZI": -1.0},
-			"gates": {"0": {"x": 0}, "1": {}, "both": {}},
-			"visible": ["ZI"]
-		},{
-			"title": "Undo the flip",
-			"desc": "The qubit has been flipped.\nFlip it back.",
-			"init": [["x","0"]], "goal": {"ZI": 1.0},
-			"gates": {"0": {"x": 3}, "1": {}, "both": {}},
-			"visible": ["ZI"]
-		},{
-			"title": "Superposition",
-			"desc": "The H gate puts a qubit into superposition.\nMake ZI = 0  (the grey circle).",
-			"init": [], "goal": {"ZI": 0.0},
-			"gates": {"0": {"h": 3}, "1": {}, "both": {}},
-			"visible": ["ZI","XI"]
-		},{
-			"title": "Phase",
-			"desc": "Start in superposition (XI=−1).\nUse Z and H to recover XI=+1.",
-			"init": [["h","0"],["z","0"]], "goal": {"XI": 1.0},
-			"gates": {"0": {"z": 0, "h": 0}, "1": {}, "both": {}},
-			"visible": ["ZI","XI"]
-		},{
-			"title": "Minus state",
-			"desc": "Reach ZI = −1 using only Z and H.",
-			"init": [], "goal": {"ZI": -1.0},
-			"gates": {"0": {"z": 0, "h": 0}, "1": {}, "both": {}},
-			"visible": ["ZI","XI"]
-		},
-		# ── Two-qubit intro ────────────────────────────────────────────────────
-		{
-			"title": "Second qubit",
-			"desc": "q[1] has been flipped.  Use H on q[1]\nto put it in superposition (IZ=0).",
-			"init": [["h","1"]], "goal": {"IZ": 1.0},
-			"gates": {"0": {}, "1": {"x": 3, "h": 0}, "both": {}},
-			"visible": ["ZI","XI","IZ","IX"]
-		},{
-			"title": "Phase on q[1]",
-			"desc": "Make IX = +1.",
-			"init": [["h","0"]], "goal": {"IX": 1.0},
-			"gates": {"0": {}, "1": {"z": 0, "h": 0}, "both": {}},
-			"visible": ["ZI","XI","IZ","IX"]
-		},{
-			"title": "Two qubits free",
-			"desc": "q[1] starts flipped.  Make ZI = 0 and IZ = 0.",
-			"init": [["x","1"]], "goal": {"ZI": 0.0, "IZ": 0.0},
-			"gates": {"0": {"x": 0,"z": 0,"h": 0}, "1": {"x": 0,"z": 0,"h": 0}, "both": {}},
-			"visible": "all"
-		},
-		# ── Correlations ───────────────────────────────────────────────────────
-		{
-			"title": "ZZ correlation",
-			"desc": "Start: both in |+⟩.  Reach ZZ = −1.",
-			"init": [["h","0"],["h","1"]], "goal": {"ZZ": -1.0},
-			"gates": {"0": {"x": 0,"z": 0,"h": 0}, "1": {"x": 0,"z": 0,"h": 0}, "both": {}},
-			"visible": "all"
-		},{
-			"title": "XX correlation",
-			"desc": "Reach XX = +1.",
-			"init": [["x","0"]], "goal": {"XX": 1.0},
-			"gates": {"0": {"x": 0,"z": 0,"h": 0}, "1": {"x": 0,"z": 0,"h": 0}, "both": {}},
-			"visible": "all"
-		},{
-			"title": "XZ correlation",
-			"desc": "Reach XZ = −1.",
-			"init": [], "goal": {"XZ": -1.0},
-			"gates": {"0": {"x": 0,"z": 0,"h": 0}, "1": {"x": 0,"z": 0,"h": 0}, "both": {}},
-			"visible": "all"
-		},
-		# ── CNOT ──────────────────────────────────────────────────────────────
-		{
-			"title": "CNOT gate",
-			"desc": "q[0] starts flipped.  Use CNOT to copy\nthe flip to q[1].  Reach ZI=1, IZ=−1.",
-			"init": [["x","0"]], "goal": {"ZI": 1.0, "IZ": -1.0},
-			"gates": {"0": {"cx": 0}, "1": {"cx": 0}, "both": {}},
-			"visible": "all"
-		},{
-			"title": "CNOT from superposition",
-			"desc": "q[0] in |+⟩.  CNOT entangles qubits.\nReach IZ = 0.",
-			"init": [["h","0"]], "goal": {"IZ": 0.0},
-			"gates": {"0": {"cx": 0}, "1": {"cx": 0}, "both": {}},
-			"visible": "all"
-		},{
-			"title": "CNOT entanglement",
-			"desc": "q[0] in |+>, q[1] flipped.  CNOT entangles them.\nReach ZZ = -1.",
-			"init": [["h","0"],["x","1"]], "goal": {"ZZ": -1.0},
-			"gates": {"0": {"cx": 0}, "1": {"cx": 0}, "both": {}},
-			"visible": "all"
-		},
-		# ── CZ ────────────────────────────────────────────────────────────────
-		{
-			"title": "CZ gate",
-			"desc": "q[0] in |+⟩, q[1] flipped.  CZ flips\nthe phase.  Reach XI = −1.",
-			"init": [["h","0"],["x","1"]], "goal": {"XI": -1.0},
-			"gates": {"0": {"cz": 0}, "1": {}, "both": {}},
-			"visible": "all"
-		},{
-			"title": "CZ symmetry",
-			"desc": "CZ is symmetric.  Start: q[1] in |+⟩,\nq[0] flipped.  Reach IX = −1.",
-			"init": [["h","1"],["x","0"]], "goal": {"IX": -1.0},
-			"gates": {"0": {"cz": 0}, "1": {}, "both": {}},
-			"visible": "all"
-		},
-		# ── Entanglement ───────────────────────────────────────────────────────
-		{
-			"title": "Entangle with CZ",
-			"desc": "Reach IZ = −1 using H and CZ.",
-			"init": [["x","0"]], "goal": {"IZ": -1.0},
-			"gates": {"0": {"h": 0}, "1": {"h": 0}, "both": {"cz": 0}},
-			"visible": "all"
-		},{
-			"title": "Correlated superposition",
-			"desc": "Start: both in |+⟩.  Reach XI = −1 and IX = −1.",
-			"init": [["h","0"],["h","1"]], "goal": {"XI": -1.0, "IX": -1.0},
-			"gates": {"0": {}, "1": {"z": 0, "cx": 0}, "both": {}},
-			"visible": "all"
-		},{
-			"title": "Swap logic",
-			"desc": "q[1] is flipped.  Make IZ = 1 and ZI = −1.",
-			"init": [["x","1"]], "goal": {"IZ": 1.0, "ZI": -1.0},
-			"gates": {"0": {"h": 0}, "1": {"h": 0}, "both": {"cz": 0}},
-			"visible": "all"
-		},{
-			"title": "Bell state",
-			"desc": "Start: both flipped.  Reach ZI = 1, IZ = −1.",
-			"init": [["x","0"],["x","1"]], "goal": {"ZI": 1.0, "IZ": -1.0},
-			"gates": {"0": {"h": 0}, "1": {"h": 0, "cx": 0}, "both": {}},
-			"visible": "all"
-		},{
-			"title": "Teleportation step",
-			"desc": "q[0] flipped.  Reach ZI = 1, IZ = −1\nusing CNOT from q[1].",
-			"init": [["x","0"]], "goal": {"ZI": 1.0, "IZ": -1.0},
-			"gates": {"0": {"cx": 0}, "1": {"cx": 0}, "both": {}},
-			"visible": "all"
-		}
-	]
+	_puzzles = Puzzles.get_all()
 
 func _load(idx: int) -> void:
 	_pidx = idx
@@ -283,9 +141,6 @@ func _gate(gate_name: String, qubit: String) -> void:
 		"x", "NOT": qc.x(1 - q)
 		"z":        qc.z(1 - q)
 		"h":        qc.h(1 - q)
-		"cx", "CNOT":
-			if q == 0: qc.cx(1, 0)   # ctrl=our q0=mm q1, tgt=our q1=mm q0
-			else:      qc.cx(0, 1)
 		"cz":
 			qc.h(0); qc.cx(1, 0); qc.h(0)   # CZ = H_t · CX · H_t
 	_sv = MicroMoth.simulate(qc, 0, "statevector")
@@ -300,7 +155,6 @@ func _satisfied() -> bool:
 
 # ── Buttons ────────────────────────────────────────────────────────────────────
 # Fixed 7-button layout — always the same positions; grey when not in current puzzle.
-# The "x" slot doubles as cx/CNOT: _actual_gate() picks which to apply.
 const GATE_SLOT_0 := {"z": -2.5, "h": -1.5, "x": -0.5}
 const GATE_SLOT_1 := {"z":  2.5, "h":  1.5, "x":  0.5}
 
@@ -320,16 +174,14 @@ const BTN_CONNECTS := {
 	"0_z":  ["XI"],
 	"0_x":  ["ZI"],
 	"0_h":  ["ZI","XI"],
-	"0_cx": ["ZI","IZ"],
 	"1_z":  ["IX"],
 	"1_x":  ["IZ"],
 	"1_h":  ["IZ","IX"],
-	"1_cx": ["IZ","ZI"],
 	"both_cz": ["XZ","ZX"],
 }
 
 func _build_btns() -> void:
-	if not _btns.is_empty(): return   # fixed layout — built once only
+	_btns.clear()
 	for spec: Dictionary in FIXED_BTN_SPECS:
 		var qk: String = spec["qkey"]
 		var g:  String = spec["gate"]
@@ -345,18 +197,8 @@ func _btn_rect(b: Dictionary) -> Rect2:
 	var c: Vector2 = b["center"]
 	return Rect2(c.x - BTN_S/2.0, c.y - BTN_S/2.0, BTN_S, BTN_S)
 
-# The x slot applies cx when cx is available, otherwise x.
-func _actual_gate(b: Dictionary) -> String:
-	if b["gate"] == "x" and _uses.get(b["qkey"], {}).get("cx", 0) != 0:
-		return "cx"
-	return b["gate"]
-
 func _btn_enabled(b: Dictionary) -> bool:
-	var qk: String = b["qkey"]
-	var g:  String = b["gate"]
-	if g == "x":
-		return _uses.get(qk, {}).get("x", 0) != 0 or _uses.get(qk, {}).get("cx", 0) != 0
-	return _uses.get(qk, {}).get(g, 0) != 0
+	return _uses.get(b["qkey"], {}).get(b["gate"], 0) != 0
 
 # ── Input ──────────────────────────────────────────────────────────────────────
 func _input(ev: InputEvent) -> void:
@@ -370,6 +212,12 @@ func _input(ev: InputEvent) -> void:
 			var nxt := _pidx + 1
 			if nxt < _puzzles.size(): _load(nxt)
 			else: _ph = Ph.TITLE; queue_redraw()
+		return
+
+	if ev is InputEventKey and ev.pressed and ev.keycode == KEY_SPACE:
+		var nxt := _pidx + 1
+		if nxt < _puzzles.size(): _load(nxt)
+		else: _ph = Ph.TITLE; queue_redraw()
 		return
 
 	if ev is InputEventMouseMotion:
@@ -386,7 +234,7 @@ func _input(ev: InputEvent) -> void:
 
 func _press(b: Dictionary) -> void:
 	var qk: String = b["qkey"]
-	var g:  String = _actual_gate(b)
+	var g:  String = b["gate"]
 	var q_arg := "0" if qk == "both" else qk
 	_gate(g, q_arg)
 	var rem = _uses.get(qk, {}).get(g, -1)
@@ -407,8 +255,8 @@ func _draw() -> void:
 	draw_rect(Rect2(0,0,W,H), C_BG)
 	match _ph:
 		Ph.TITLE:   _draw_title()
-		Ph.PLAY:    _draw_board(); _draw_board_buttons(); _draw_panel()
-		Ph.SUCCESS: _draw_board(); _draw_board_buttons(); _draw_panel(); _draw_success()
+		Ph.PLAY:    _draw_board(); _draw_target(); _draw_board_buttons(); _draw_panel()
+		Ph.SUCCESS: _draw_board(); _draw_target(); _draw_board_buttons(); _draw_panel(); _draw_success()
 
 func _draw_title() -> void:
 	var cx := W/2.0
@@ -434,6 +282,26 @@ func _draw_diamond(center: Vector2, r: float, fill: Color,
 	draw_polygon(pts, PackedColorArray([fill, fill, fill, fill]))
 	draw_polyline(PackedVector2Array([pts[0],pts[1],pts[2],pts[3],pts[0]]),
 		outline_col, outline_w)
+
+func _draw_target() -> void:
+	var goal: Dictionary = _puzzles[_pidx]["goal"]
+	if goal.is_empty(): return
+	const MBX  := 85.0    # mini-grid centre x
+	const MBY  := 215.0   # mini-grid centre y (same coordinate system as _sp)
+	const MS   := 20.0    # cell unit (vs CELL=82)
+	const MDR  := 13.0    # half-diagonal (vs DR=52)
+	const MCR  :=  8.0    # circle radius (vs CR=30)
+	draw_string(_font, Vector2(MBX - 40.0, MBY - MDR - 55.0), "Target",
+		HORIZONTAL_ALIGNMENT_LEFT, -1, 14, C_LBL)
+	for pauli: String in BOXES:
+		var gv: Vector2 = BOXES[pauli]
+		var pos := Vector2(MBX + gv.x * MS, MBY + (3.5 - gv.y) * MS)
+		_draw_diamond(pos, MDR, C_CELL_BG, Color(0.55, 0.55, 0.85, 0.3), 0.6)
+		if goal.has(pauli):
+			var prob := (1.0 - float(goal[pauli])) / 2.0
+			_draw_diamond(pos, MDR, C_CELL, C_WIN, 1.2)
+			draw_circle(pos, MCR, Color(prob, prob, prob))
+			draw_arc(pos, MCR, 0.0, TAU, 32, Color(1.0, 1.0, 1.0, 0.5), 1.0)
 
 func _draw_board() -> void:
 	var goal: Dictionary = _puzzles[_pidx]["goal"]
@@ -476,7 +344,7 @@ func _draw_board_buttons() -> void:
 		var hov := en and (i == _hov)
 
 		# Connection lines — two independent branches, one per target cell
-		var actual_g: String = _actual_gate(b)
+		var actual_g: String = b["gate"]
 		var conn_key: String = b["qkey"] + "_" + actual_g
 		if BTN_CONNECTS.has(conn_key):
 			var lc: Color = C_CONN if en else Color(C_CONN.r, C_CONN.g, C_CONN.b, C_CONN.a * 0.35)
@@ -515,10 +383,6 @@ func _draw_board_buttons() -> void:
 		# Gate letter (large) + "GATE" text below
 		var tc := C_BTN_TXT if en else Color(0.35,0.35,0.50)
 		var letter: String = (b["gate"] as String).to_upper()
-		# Shorten long names
-		if letter in ["CNOT","NOT"]: letter = "X"
-		if letter == "CX": letter = "X"
-		if letter == "CZ": letter = "CZ"
 		draw_string(_font, r.position + Vector2(BTN_S/2.0 - 10, BTN_S/2.0 + 4),
 			letter, HORIZONTAL_ALIGNMENT_LEFT, -1, 26, tc)
 		draw_string(_font, r.position + Vector2(BTN_S/2.0 - 17, BTN_S/2.0 + 22),
