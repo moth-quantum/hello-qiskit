@@ -2,7 +2,7 @@ extends Node2D
 
 const MicroMoth = preload("res://micromoth.gd")
 
-# Hello Quantum — Godot 4 port of the original Hello Quantum / Hello Qiskit game.
+# Hello Qubits — Godot 4 port of the Hello Qiskit game from the Qiskit Textbook.
 # Two-qubit state displayed as Pauli expectation values in the original diamond layout.
 # Gates: x, z, h (single-qubit Clifford) and cx, cz (two-qubit Clifford).
 # State is tracked as a 4-element complex statevector; Pauli expectations are derived analytically.
@@ -412,7 +412,7 @@ func _draw() -> void:
 
 func _draw_title() -> void:
 	var cx := W/2.0
-	draw_string(_font, Vector2(cx-160, H/2.0-70), "Hello Quantum",
+	draw_string(_font, Vector2(cx-160, H/2.0-70), "Hello Qubits",
 		HORIZONTAL_ALIGNMENT_LEFT, -1, 52, Color.WHITE)
 	draw_string(_font, Vector2(cx-190, H/2.0+10),
 		"A two-qubit quantum computing puzzle game",

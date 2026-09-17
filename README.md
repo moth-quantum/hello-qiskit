@@ -1,6 +1,6 @@
-# Hello Qiskit
+# Hello Qubits
 
-A Godot 4 port of the *Hello Qiskit* puzzle game from the [Qiskit Textbook](https://github.com/Qiskit/textbook).
+A Godot 4 port of the *Hello Qiskit* puzzle game from the [Qiskit Textbook](https://github.com/Qiskit/textbook), released here as *Hello Qubits*.
 
 *Hello Qiskit* is a sister project of [Hello Quantum](https://helloquantum.mybluemix.net/), the quantum puzzle app developed by the University of Basel and IBM. Both games teach quantum computing through a visual representation of two-qubit states as Pauli expectation values arranged in a diamond lattice. Each puzzle asks the player to transform the state using quantum gates — X, Z, H, CNOT, and CZ — until the displayed values match a target configuration.
 
