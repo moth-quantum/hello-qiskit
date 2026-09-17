@@ -1,5 +1,7 @@
 extends Node2D
 
+const MicroMoth = preload("res://micromoth.gd")
+
 # Hello Quantum — Godot 4 port of the original Hello Quantum / Hello Qiskit game.
 # Two-qubit state displayed as Pauli expectation values in the original diamond layout.
 # Gates: x, z, h (single-qubit Clifford) and cx, cz (two-qubit Clifford).
@@ -22,11 +24,17 @@ var _moves: int = 0
 # ── Visual constants ───────────────────────────────────────────────────────────
 const W    := 960
 const H    := 640
-const CELL := 90        # grid unit → pixel
-const BX   := 315       # screen x for grid x=0 (board centre)
-const BY   := 320       # screen y for grid y=3.5 (vertical centre)
-const DR   := 60        # diamond half-diagonal (≈ CELL/√2 → diagonally adjacent cells just touch)
-const PX   := 630       # right panel x
+const CELL := 82        # grid unit → pixel
+const BX   := 318       # screen x for grid x=0 (board centre within 640px board)
+const BY   := 295       # screen y for grid y=3.5 (vertical centre, shifted up for button room)
+const DR   := 52        # diamond cell half-diagonal
+const CR   := 30        # circle radius inside each diamond cell
+const PX   := 640       # right panel x
+
+# Gate button geometry
+const BTN_S  := 72      # button square side length
+const BTN_Y  := 585     # centre-y for single-qubit gate buttons (below diamond)
+const CZ_BTN_Y := 68    # centre-y for CZ gate button (above diamond)
 
 # Grid positions from the original hello_quantum.py box dictionary.
 const BOXES := {
@@ -45,13 +53,18 @@ const EDGES := [
 	["XZ","XX"],["ZX","XX"]
 ]
 
-const C_BG   := Color(0.04,0.04,0.14)
-const C_GRID := Color(0.22,0.22,0.38)
-const C_LBL  := Color(0.65,0.78,1.0)
-const C_WIN  := Color(0.25,0.95,0.45)
-const C_BTN  := Color(0.13,0.18,0.38)
-const C_HOVR := Color(0.28,0.38,0.70)
-const C_OFF  := Color(0.10,0.10,0.16)
+const C_BG      := Color(0.30, 0.30, 0.62)          # blue-purple background
+const C_CELL    := Color(0.40, 0.40, 0.75, 0.80)    # active diamond cell fill
+const C_CELL_BG := Color(0.28, 0.28, 0.58, 0.50)    # background (inactive) cell
+const C_EDGE    := Color(0.70, 0.70, 1.00, 0.35)    # grid connector lines
+const C_CONN    := Color(0.80, 0.80, 1.00, 0.45)    # button connection lines
+const C_LBL     := Color(0.85, 0.88, 1.00)          # labels
+const C_WIN     := Color(0.35, 1.00, 0.55)          # success / goal highlight
+const C_BTN_ON  := Color(0.95, 0.95, 1.00)          # active button background
+const C_BTN_HOV := Color(1.00, 1.00, 1.00)          # hovered button background
+const C_BTN_OFF := Color(0.55, 0.55, 0.72)          # exhausted / disabled button
+const C_BTN_TXT := Color(0.15, 0.15, 0.35)          # button text (dark)
+const C_PANEL   := Color(0.22, 0.22, 0.50)
 
 # ── Phase ──────────────────────────────────────────────────────────────────────
 enum Ph { TITLE, PLAY, SUCCESS }
@@ -166,9 +179,9 @@ func _build_puzzles() -> void:
 			"visible": "all"
 		},{
 			"title": "CNOT entanglement",
-			"desc": "Reach ZZ = −1.",
-			"init": [["h","0"]], "goal": {"ZZ": -1.0},
-			"gates": {"0": {"cx": 0,"x": 0}, "1": {"cx": 0,"x": 0}, "both": {}},
+			"desc": "q[0] in |+>, q[1] flipped.  CNOT entangles them.\nReach ZZ = -1.",
+			"init": [["h","0"],["x","1"]], "goal": {"ZZ": -1.0},
+			"gates": {"0": {"cx": 0}, "1": {"cx": 0}, "both": {}},
 			"visible": "all"
 		},
 		# ── CZ ────────────────────────────────────────────────────────────────
@@ -261,43 +274,21 @@ func _rho_from_sv() -> void:
 	_rho["ZX"] = 2.0*(_re_dot(a[0],a[1]) - _re_dot(a[2],a[3]))
 	_rho["XZ"] = 2.0*(_re_dot(a[0],a[2]) - _re_dot(a[1],a[3]))
 
-func _vadd(a: Array, b: Array) -> Array: return [a[0]+b[0], a[1]+b[1]]
-func _vsub(a: Array, b: Array) -> Array: return [a[0]-b[0], a[1]-b[1]]
-func _vscl(a: Array, s: float)  -> Array: return [a[0]*s,   a[1]*s  ]
-
 func _gate(gate_name: String, qubit: String) -> void:
+	# MicroMoth uses qubit 0 = LSB; our qubit 0 = MSB, so mm_q = 1 - q.
 	var q := int(qubit)
+	var qc := MicroMoth.QuantumCircuit.new(2)
+	qc.initialize(_sv.duplicate(true))
 	match gate_name:
-		"x","NOT":
-			if q == 0:
-				var t = _sv[0]; _sv[0] = _sv[2]; _sv[2] = t
-				t = _sv[1]; _sv[1] = _sv[3]; _sv[3] = t
-			else:
-				var t = _sv[0]; _sv[0] = _sv[1]; _sv[1] = t
-				t = _sv[2]; _sv[2] = _sv[3]; _sv[3] = t
-		"z":
-			if q == 0:
-				_sv[2] = _vscl(_sv[2], -1.0); _sv[3] = _vscl(_sv[3], -1.0)
-			else:
-				_sv[1] = _vscl(_sv[1], -1.0); _sv[3] = _vscl(_sv[3], -1.0)
-		"h":
-			var s := 1.0/sqrt(2.0)
-			if q == 0:
-				var n0 = _vscl(_vadd(_sv[0],_sv[2]),s); var n2 = _vscl(_vsub(_sv[0],_sv[2]),s)
-				var n1 = _vscl(_vadd(_sv[1],_sv[3]),s); var n3 = _vscl(_vsub(_sv[1],_sv[3]),s)
-				_sv[0]=n0; _sv[1]=n1; _sv[2]=n2; _sv[3]=n3
-			else:
-				var n0 = _vscl(_vadd(_sv[0],_sv[1]),s); var n1 = _vscl(_vsub(_sv[0],_sv[1]),s)
-				var n2 = _vscl(_vadd(_sv[2],_sv[3]),s); var n3 = _vscl(_vsub(_sv[2],_sv[3]),s)
-				_sv[0]=n0; _sv[1]=n1; _sv[2]=n2; _sv[3]=n3
-		"cx","CNOT":
-			# ctrl=q0 target=q1 when qubit=="0"; ctrl=q1 target=q0 when qubit=="1"
-			if q == 0:
-				var t = _sv[2]; _sv[2] = _sv[3]; _sv[3] = t
-			else:
-				var t = _sv[1]; _sv[1] = _sv[3]; _sv[3] = t
+		"x", "NOT": qc.x(1 - q)
+		"z":        qc.z(1 - q)
+		"h":        qc.h(1 - q)
+		"cx", "CNOT":
+			if q == 0: qc.cx(1, 0)   # ctrl=our q0=mm q1, tgt=our q1=mm q0
+			else:      qc.cx(0, 1)
 		"cz":
-			_sv[3] = _vscl(_sv[3], -1.0)
+			qc.h(0); qc.cx(1, 0); qc.h(0)   # CZ = H_t · CX · H_t
+	_sv = MicroMoth.simulate(qc, 0, "statevector")
 
 func _satisfied() -> bool:
 	var goal: Dictionary = _puzzles[_pidx]["goal"]
@@ -308,25 +299,64 @@ func _satisfied() -> bool:
 	return true
 
 # ── Buttons ────────────────────────────────────────────────────────────────────
+# Fixed 7-button layout — always the same positions; grey when not in current puzzle.
+# The "x" slot doubles as cx/CNOT: _actual_gate() picks which to apply.
+const GATE_SLOT_0 := {"z": -2.5, "h": -1.5, "x": -0.5}
+const GATE_SLOT_1 := {"z":  2.5, "h":  1.5, "x":  0.5}
+
+const FIXED_BTN_SPECS: Array = [
+	{"gate": "z",  "qkey": "0"},
+	{"gate": "h",  "qkey": "0"},
+	{"gate": "x",  "qkey": "0"},
+	{"gate": "x",  "qkey": "1"},
+	{"gate": "h",  "qkey": "1"},
+	{"gate": "z",  "qkey": "1"},
+	{"gate": "cz", "qkey": "both"},
+]
+
+# Which diamond cells each button's connection lines reach.
+# Z affects X-type observables (top row); X affects Z-type (bottom row); H both.
+const BTN_CONNECTS := {
+	"0_z":  ["XI"],
+	"0_x":  ["ZI"],
+	"0_h":  ["ZI","XI"],
+	"0_cx": ["ZI","IZ"],
+	"1_z":  ["IX"],
+	"1_x":  ["IZ"],
+	"1_h":  ["IZ","IX"],
+	"1_cx": ["IZ","ZI"],
+	"both_cz": ["XZ","ZX"],
+}
+
 func _build_btns() -> void:
-	_btns.clear()
-	var bx := PX + 12
-	var by := 170
-	var bw := 300
-	var bh := 38
-	var gap := 6
-	var puz: Dictionary = _puzzles[_pidx]
-	for qk: String in ["0","1","both"]:
-		var gates: Dictionary = puz["gates"].get(qk, {})
-		if gates.is_empty(): continue
-		for g: String in gates:
-			_btns.append({"rect": Rect2(bx,by,bw,bh), "gate": g, "qkey": qk})
-			by += bh + gap
-		by += 10
+	if not _btns.is_empty(): return   # fixed layout — built once only
+	for spec: Dictionary in FIXED_BTN_SPECS:
+		var qk: String = spec["qkey"]
+		var g:  String = spec["gate"]
+		var center: Vector2
+		if qk == "both":
+			center = Vector2(BX, CZ_BTN_Y)
+		else:
+			var slots: Dictionary = GATE_SLOT_0 if qk == "0" else GATE_SLOT_1
+			center = Vector2(BX + slots[g] * CELL, BTN_Y)
+		_btns.append({"gate": g, "qkey": qk, "center": center})
+
+func _btn_rect(b: Dictionary) -> Rect2:
+	var c: Vector2 = b["center"]
+	return Rect2(c.x - BTN_S/2.0, c.y - BTN_S/2.0, BTN_S, BTN_S)
+
+# The x slot applies cx when cx is available, otherwise x.
+func _actual_gate(b: Dictionary) -> String:
+	if b["gate"] == "x" and _uses.get(b["qkey"], {}).get("cx", 0) != 0:
+		return "cx"
+	return b["gate"]
 
 func _btn_enabled(b: Dictionary) -> bool:
-	var rem = _uses.get(b["qkey"],{}).get(b["gate"], -1)
-	return rem != 0  # -1=unlimited, N>0=remaining, 0=exhausted
+	var qk: String = b["qkey"]
+	var g:  String = b["gate"]
+	if g == "x":
+		return _uses.get(qk, {}).get("x", 0) != 0 or _uses.get(qk, {}).get("cx", 0) != 0
+	return _uses.get(qk, {}).get(g, 0) != 0
 
 # ── Input ──────────────────────────────────────────────────────────────────────
 func _input(ev: InputEvent) -> void:
@@ -345,27 +375,25 @@ func _input(ev: InputEvent) -> void:
 	if ev is InputEventMouseMotion:
 		var old := _hov; _hov = -1
 		for i in _btns.size():
-			if _btns[i]["rect"].has_point(ev.position) and _btn_enabled(_btns[i]):
+			if _btn_rect(_btns[i]).has_point(ev.position) and _btn_enabled(_btns[i]):
 				_hov = i; break
 		if _hov != old: queue_redraw()
 
 	if ev is InputEventMouseButton and ev.pressed and ev.button_index == 1:
 		for b in _btns:
-			if b["rect"].has_point(ev.position) and _btn_enabled(b):
+			if _btn_rect(b).has_point(ev.position) and _btn_enabled(b):
 				_press(b); return
 
 func _press(b: Dictionary) -> void:
 	var qk: String = b["qkey"]
-	var g: String = b["gate"]
+	var g:  String = _actual_gate(b)
 	var q_arg := "0" if qk == "both" else qk
 	_gate(g, q_arg)
-	# Decrement limited uses
-	var rem = _uses.get(qk,{}).get(g, -1)
+	var rem = _uses.get(qk, {}).get(g, -1)
 	if rem > 0:
 		_uses[qk][g] = rem - 1
 	_rho_from_sv()
 	_moves += 1
-	_build_btns()
 	if _satisfied():
 		_ph = Ph.SUCCESS
 	queue_redraw()
@@ -379,8 +407,8 @@ func _draw() -> void:
 	draw_rect(Rect2(0,0,W,H), C_BG)
 	match _ph:
 		Ph.TITLE:   _draw_title()
-		Ph.PLAY:    _draw_board(); _draw_panel()
-		Ph.SUCCESS: _draw_board(); _draw_panel(); _draw_success()
+		Ph.PLAY:    _draw_board(); _draw_board_buttons(); _draw_panel()
+		Ph.SUCCESS: _draw_board(); _draw_board_buttons(); _draw_panel(); _draw_success()
 
 func _draw_title() -> void:
 	var cx := W/2.0
@@ -410,40 +438,100 @@ func _draw_diamond(center: Vector2, r: float, fill: Color,
 func _draw_board() -> void:
 	var goal: Dictionary = _puzzles[_pidx]["goal"]
 
-	# Background grid: draw all 8 cells as dim outlines so the full
-	# diamond lattice is always visible even in single-qubit puzzles.
+	# All 8 background cells (dim, always visible for context)
 	for pauli: String in BOXES:
 		var pos := _sp(BOXES[pauli])
-		_draw_diamond(pos, DR, Color(0.09,0.09,0.20), Color(0.20,0.20,0.35), 1.0)
+		_draw_diamond(pos, DR, C_CELL_BG, Color(0.55,0.55,0.85,0.5), 1.0)
 
-	# Thin connector lines between adjacent active boxes
+	# Grid connector lines
 	for e: Array in EDGES:
-		draw_line(_sp(BOXES[e[0]]), _sp(BOXES[e[1]]), C_GRID, 1.0)
+		draw_line(_sp(BOXES[e[0]]), _sp(BOXES[e[1]]), C_EDGE, 1.2)
 
-	# Filled, labelled cells for active Pauli expectations
+	# Active cells: diamond container + circle inside
 	for pauli: String in _visible:
 		var pos  := _sp(BOXES[pauli])
 		var rv   : float = _rho.get(pauli, 0.0)
 		var prob := (1.0 - rv) / 2.0   # 0=black |0⟩, 1=white |1⟩
-
 		var is_goal := goal.has(pauli)
-		var oc      := C_WIN if is_goal else C_LBL
-		var ow      := 3.5   if is_goal else 1.5
 
-		_draw_diamond(pos, DR, Color(prob, prob, prob), oc, ow)
+		# Diamond container
+		var oc := C_WIN if is_goal else Color(0.75,0.75,1.0,0.9)
+		var ow := 3.0   if is_goal else 1.8
+		_draw_diamond(pos, DR, C_CELL, oc, ow)
 
+		# Circle fill inside
+		draw_circle(pos, CR, Color(prob, prob, prob))
+		draw_arc(pos, CR, 0.0, TAU, 40, Color(1,1,1,0.7), 1.5)
+
+		# Pauli label
 		var lc := Color(0.1,0.1,0.1) if prob > 0.55 else Color(0.95,0.95,0.95)
-		draw_string(_font, pos + Vector2(-15, 7), pauli,
-			HORIZONTAL_ALIGNMENT_LEFT, -1, 14, lc)
+		draw_string(_font, pos + Vector2(-14, 6), pauli,
+			HORIZONTAL_ALIGNMENT_LEFT, -1, 13, lc)
 
-	# Qubit axis labels beside their respective diagonal columns
-	draw_string(_font, _sp(Vector2(-1, 2)) + Vector2(-DR - 42, 7),
-		"q[0]", HORIZONTAL_ALIGNMENT_LEFT, -1, 16, C_LBL)
-	draw_string(_font, _sp(Vector2(1, 2)) + Vector2(DR + 6, 7),
-		"q[1]", HORIZONTAL_ALIGNMENT_LEFT, -1, 16, C_LBL)
+func _draw_board_buttons() -> void:
+	for i in _btns.size():
+		var b: Dictionary = _btns[i]
+		var r  := _btn_rect(b)
+		var en := _btn_enabled(b)
+		var hov := en and (i == _hov)
+
+		# Connection lines — two independent branches, one per target cell
+		var actual_g: String = _actual_gate(b)
+		var conn_key: String = b["qkey"] + "_" + actual_g
+		if BTN_CONNECTS.has(conn_key):
+			var lc: Color = C_CONN if en else Color(C_CONN.r, C_CONN.g, C_CONN.b, C_CONN.a * 0.35)
+			var bx: float = b["center"].x
+			if b["qkey"] == "both":
+				# CZ: V-shape, lines go DOWN from shared junction to XZ/ZX top vertices
+				var start_y: float = r.position.y + BTN_S
+				for tp: String in BTN_CONNECTS[conn_key]:
+					var cp := _sp(BOXES[tp])
+					var tx: float = cp.x;  var ty: float = cp.y - DR
+					var jy: float = ty - abs(tx - bx)
+					if jy > start_y:
+						draw_line(Vector2(bx, start_y), Vector2(bx, jy), lc, 1.5)
+						draw_line(Vector2(bx, jy), Vector2(tx, ty), lc, 1.5)
+					else:
+						draw_line(Vector2(bx, start_y), Vector2(tx, ty), lc, 1.5)
+			else:
+				# Rectangular routing: vertical trunk up to ZI/IZ row, horizontal to each
+				# target's x, then vertical up to cell bottom if above that row.
+				var junc_y: float = BY + 1.5 * CELL + DR  # y of ZI/IZ bottom vertices = 470
+				var start_y: float = r.position.y
+				draw_line(Vector2(bx, start_y), Vector2(bx, junc_y), lc, 1.5)
+				for tp: String in BTN_CONNECTS[conn_key]:
+					var cp := _sp(BOXES[tp])
+					var tx: float = cp.x
+					var ty: float = cp.y + DR
+					draw_line(Vector2(bx, junc_y), Vector2(tx, junc_y), lc, 1.5)
+					if ty < junc_y - 0.5:
+						draw_line(Vector2(tx, junc_y), Vector2(tx, ty), lc, 1.5)
+
+		# Button square
+		var bg := C_BTN_HOV if hov else (C_BTN_ON if en else C_BTN_OFF)
+		draw_rect(r, bg)
+		draw_rect(r, Color(1,1,1,0.3) if en else Color(0,0,0,0.1), false, 1.5)
+
+		# Gate letter (large) + "GATE" text below
+		var tc := C_BTN_TXT if en else Color(0.35,0.35,0.50)
+		var letter: String = (b["gate"] as String).to_upper()
+		# Shorten long names
+		if letter in ["CNOT","NOT"]: letter = "X"
+		if letter == "CX": letter = "X"
+		if letter == "CZ": letter = "CZ"
+		draw_string(_font, r.position + Vector2(BTN_S/2.0 - 10, BTN_S/2.0 + 4),
+			letter, HORIZONTAL_ALIGNMENT_LEFT, -1, 26, tc)
+		draw_string(_font, r.position + Vector2(BTN_S/2.0 - 17, BTN_S/2.0 + 22),
+			"GATE", HORIZONTAL_ALIGNMENT_LEFT, -1, 13, tc)
+
+		# Remaining uses badge
+		var rem = _uses.get(b["qkey"], {}).get(actual_g, -1)
+		if rem > 0:
+			draw_string(_font, r.position + Vector2(2, 14), "(%d)" % rem,
+				HORIZONTAL_ALIGNMENT_LEFT, -1, 11, tc)
 
 func _draw_panel() -> void:
-	draw_rect(Rect2(PX, 0, W-PX, H), Color(0.07,0.07,0.18))
+	draw_rect(Rect2(PX, 0, W-PX, H), C_PANEL)
 
 	var puz: Dictionary = _puzzles[_pidx]
 	draw_string(_font, Vector2(PX+12, 28),
@@ -452,40 +540,18 @@ func _draw_panel() -> void:
 	draw_string(_font, Vector2(PX+12, 58), puz["title"],
 		HORIZONTAL_ALIGNMENT_LEFT, -1, 24, Color.WHITE)
 
-	# Description (wrapped manually at '\n')
 	var dy := 92.0
 	for line: String in puz["desc"].split("\n"):
 		draw_string(_font, Vector2(PX+12, dy), line,
 			HORIZONTAL_ALIGNMENT_LEFT, -1, 15, C_LBL)
 		dy += 22
 
-	# Goal display
 	var goal_str := ""
 	for p: String in puz["goal"]:
 		goal_str += "%s=%s  " % [p, str(puz["goal"][p])]
 	if goal_str == "": goal_str = "(explore)"
 	draw_string(_font, Vector2(PX+12, dy+4),
 		"Goal: " + goal_str, HORIZONTAL_ALIGNMENT_LEFT, -1, 15, C_WIN)
-
-	# Gate buttons
-	draw_string(_font, Vector2(PX+12, 158), "Gates:",
-		HORIZONTAL_ALIGNMENT_LEFT, -1, 16, C_LBL)
-
-	for i in _btns.size():
-		var b: Dictionary = _btns[i]
-		var r   : Rect2  = b["rect"]
-		var en  := _btn_enabled(b)
-		var hov := en and (i == _hov)
-		draw_rect(r, C_HOVR if hov else (C_BTN if en else C_OFF))
-		draw_rect(r, C_LBL if en else C_GRID, false, 1.0)
-
-		var lbl: String = b["gate"]
-		if b["qkey"] != "both": lbl += " [q%s]" % b["qkey"]
-		var rem = _uses.get(b["qkey"],{}).get(b["gate"], -1)
-		if rem > 0: lbl += "  (%d left)" % rem
-		var tc := Color.WHITE if en else C_GRID
-		draw_string(_font, r.position + Vector2(10, 26), lbl,
-			HORIZONTAL_ALIGNMENT_LEFT, -1, 17, tc)
 
 	draw_string(_font, Vector2(PX+12, H-20),
 		"Moves: %d" % _moves, HORIZONTAL_ALIGNMENT_LEFT, -1, 15, C_LBL)
