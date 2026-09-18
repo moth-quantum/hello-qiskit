@@ -85,6 +85,8 @@ var _visible: Array = []  # subset of BOXES keys
 func _ready() -> void:
 	_font = ThemeDB.fallback_font
 	_build_puzzles()
+	if OS.has_feature("web"):
+		JavaScriptBridge.eval("var s=document.createElement('style');s.textContent='html{background:#4d4d9e;}body{overflow-x:auto!important;overflow-y:auto!important;display:flex;justify-content:center;align-items:flex-start;background:#4d4d9e;}#canvas{width:960px!important;height:640px!important;}';document.head.appendChild(s);")
 	queue_redraw()
 
 func _build_puzzles() -> void:

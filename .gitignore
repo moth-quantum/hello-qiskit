@@ -2,3 +2,5 @@
 *.import
 *.uid
 .DS_Store
+export/
+*.zip
